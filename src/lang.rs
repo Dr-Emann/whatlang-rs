@@ -95,8 +95,8 @@ impl Lang {
     /// use whatlang::Lang;
     /// assert_eq!(Lang::from_code("ukr"), Some(Lang::Ukr));
     /// ```
-    pub fn from_code<S: Into<String>>(code: S) -> Option<Lang> {
-        match code.into().to_lowercase().as_ref() {
+    pub fn from_code<S: AsRef<str>>(code: S) -> Option<Lang> {
+        match code.as_ref().to_lowercase().as_ref() {
                         "aka" => Some(Lang::Aka),
                         "amh" => Some(Lang::Amh),
                         "arb" => Some(Lang::Arb),
