@@ -31,6 +31,7 @@
 //! let lang = detector.detect_lang("There is no reason not to learn Esperanto.");
 //! assert_eq!(lang, Some(Lang::Eng));
 extern crate fnv;
+extern crate rayon;
 
 mod lang;
 mod script;

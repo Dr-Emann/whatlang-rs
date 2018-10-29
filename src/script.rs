@@ -1,8 +1,10 @@
 use utils::is_stop_char;
 use std::fmt;
+use fnv::FnvHashMap;
+use rayon::prelude::*;
 
 /// Represents a writing system (Latin, Cyrillic, Arabic, etc).
-#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy, Hash)]
 pub enum Script {
     // Keep this in alphabetic order (for C bindings)
     Arabic,
@@ -68,7 +70,7 @@ impl fmt::Display for Script {
     }
 }
 
-type ScriptCounter = (Script, fn(char) -> bool, usize);
+type ScriptChecker = (Script, fn(char) -> bool);
 
 /// Detect only a script by a given text
 ///
@@ -79,76 +81,65 @@ type ScriptCounter = (Script, fn(char) -> bool, usize);
 /// assert_eq!(script, Script::Cyrillic);
 /// ```
 pub fn detect_script(text: &str) -> Option<Script> {
-    let mut script_counters: [ScriptCounter; 24] = [
-        (Script::Latin      , is_latin      , 0),
-        (Script::Cyrillic   , is_cyrillic   , 0),
-        (Script::Arabic     , is_arabic     , 0),
-        (Script::Mandarin   , is_mandarin   , 0),
-        (Script::Devanagari , is_devanagari , 0),
-        (Script::Hebrew     , is_hebrew     , 0),
-        (Script::Ethiopic   , is_ethiopic   , 0),
-        (Script::Georgian   , is_georgian   , 0),
-        (Script::Bengali    , is_bengali    , 0),
-        (Script::Hangul     , is_hangul     , 0),
-        (Script::Hiragana   , is_hiragana   , 0),
-        (Script::Katakana   , is_katakana   , 0),
-        (Script::Greek      , is_greek      , 0),
-        (Script::Kannada    , is_kannada    , 0),
-        (Script::Tamil      , is_tamil      , 0),
-        (Script::Thai       , is_thai       , 0),
-        (Script::Gujarati   , is_gujarati   , 0),
-        (Script::Gurmukhi   , is_gurmukhi   , 0),
-        (Script::Telugu     , is_telugu     , 0),
-        (Script::Malayalam  , is_malayalam  , 0),
-        (Script::Oriya      , is_oriya      , 0),
-        (Script::Myanmar    , is_myanmar    , 0),
-        (Script::Sinhala    , is_sinhala    , 0),
-        (Script::Khmer      , is_khmer      , 0)
+    const SCRIPT_COUNTERS: &[ScriptChecker] = &[
+        (Script::Latin      , is_latin     ),
+        (Script::Cyrillic   , is_cyrillic  ),
+        (Script::Arabic     , is_arabic    ),
+        (Script::Mandarin   , is_mandarin  ),
+        (Script::Devanagari , is_devanagari),
+        (Script::Hebrew     , is_hebrew    ),
+        (Script::Ethiopic   , is_ethiopic  ),
+        (Script::Georgian   , is_georgian  ),
+        (Script::Bengali    , is_bengali   ),
+        (Script::Hangul     , is_hangul    ),
+        (Script::Hiragana   , is_hiragana  ),
+        (Script::Katakana   , is_katakana  ),
+        (Script::Greek      , is_greek     ),
+        (Script::Kannada    , is_kannada   ),
+        (Script::Tamil      , is_tamil     ),
+        (Script::Thai       , is_thai      ),
+        (Script::Gujarati   , is_gujarati  ),
+        (Script::Gurmukhi   , is_gurmukhi  ),
+        (Script::Telugu     , is_telugu    ),
+        (Script::Malayalam  , is_malayalam ),
+        (Script::Oriya      , is_oriya     ),
+        (Script::Myanmar    , is_myanmar   ),
+        (Script::Sinhala    , is_sinhala   ),
+        (Script::Khmer      , is_khmer     ),
     ];
 
     let half = text.chars().count() / 2;
 
-    for ch in text.chars() {
-        if is_stop_char(ch) { continue; }
-
-        // For performance reasons, we need to mutate script_counters by calling
-        // `swap` function, it would not be possible to do using normal iterator.
-        for i in 0..script_counters.len() {
-            let found = {
-                let (script, check_fn, ref mut count) = script_counters[i];
-                if check_fn(ch) {
-                    *count += 1;
-                    if *count > half {
-                        return Some(script);
-                    }
-                    true
-                } else {
-                    false
+    let counts = text.par_chars().filter(|&ch| !is_stop_char(ch)).filter_map(|ch| {
+            SCRIPT_COUNTERS.par_iter().find_any(|&&(_, check_fn)| check_fn(ch)).map(|(script, _)| *script)
+        })
+        .try_fold(|| FnvHashMap::default(), |mut counts, script| {
+            // New scope needed until NLL lands
+            {
+                let count = counts.entry(script).or_insert(0);
+                *count += 1;
+                if *count > half {
+                    // use Err as an early return
+                    return Err(script);
                 }
-            };
-            // Have to let borrow of count fall out of scope before doing swapping, or we could
-            // do this above.
-            if found {
-                // If script was found, move it closer to the front.
-                // If the text contains largely 1 or 2 scripts, this will
-                // cause these scripts to be eventually checked first.
-                if i > 0 {
-                    script_counters.swap(i - 1, i);
-                }
-                break;
             }
-        }
-    }
+            Ok(counts)
+        })
+        .try_reduce(|| FnvHashMap::default(), |mut counts1, counts2| {
+            for (script, count) in counts2 {
+                let orig_count = counts1.entry(script).or_insert(0);
+                *orig_count += count;
+                if *orig_count > half {
+                    return Err(script);
+                }
+            }
+            Ok(counts1)
+        });
 
-    let (script, _, count) = script_counters
-        .iter()
-        .cloned()
-        .max_by_key(|&(_, _, count)| count)
-        .unwrap();
-    if count != 0 {
-        Some(script)
-    } else {
-        None
+    match counts {
+        // Early return: A count reached > half
+        Err(script) => Some(script),
+        Ok(counts) => counts.into_iter().max_by_key(|&(_, count)| count).map(|(script, _)| script),
     }
 }
 
