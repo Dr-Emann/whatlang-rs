@@ -3,7 +3,7 @@ extern crate criterion;
 extern crate whatlang;
 extern crate serde_json;
 
-use criterion::{Criterion, ParameterizedBenchmark, Throughput};
+use criterion::{Criterion, ParameterizedBenchmark, Throughput, black_box};
 use std::collections::HashMap;
 use whatlang::{detect, detect_script};
 
@@ -24,13 +24,13 @@ fn bench_detect(c: &mut Criterion) {
         extend_string(text);
     }
 
-    let mut langs: Vec<String> = examples.keys().map(|lang| lang.to_string()).collect();
-    langs.sort();
-
-    c.bench_function_over_inputs("detect_language", move |b, lang| {
-        let text = &examples[lang];
-        b.iter(|| detect(text))
-    }, langs);
+    c.bench_function("detect_language", move |b| {
+        b.iter(|| {
+            for (_, text) in &examples {
+                black_box(|| detect(text));
+            }
+        })
+    });
 }
 
 fn bench_detect_script(c: &mut Criterion) {
@@ -38,22 +38,14 @@ fn bench_detect_script(c: &mut Criterion) {
     for text in examples.values_mut() {
         extend_string(text);
     }
-    let examples2 = examples.clone();
 
-    let mut langs: Vec<String> = examples.keys().map(|lang| lang.to_string()).collect();
-    langs.sort();
-
-    c.bench(
-        "detect_script",
-        ParameterizedBenchmark::new(
-            "",
-            move |b, lang| {
-                let text = &examples[lang];
-                b.iter(|| detect_script(text));
-            },
-            langs
-        ).throughput(move |lang| Throughput::Bytes(examples2[lang].len() as u32))
-    );
+    c.bench_function("detect_script", move |b| {
+        b.iter(|| {
+            for (_, text) in &examples {
+                black_box(|| detect_script(text));
+            }
+        })
+    });
 }
 
 criterion_group!(benches, bench_detect_script, bench_detect);
