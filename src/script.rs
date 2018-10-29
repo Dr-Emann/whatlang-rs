@@ -113,24 +113,22 @@ pub fn detect_script(text: &str) -> Option<Script> {
     let counts = text.par_chars().filter(|&ch| !is_stop_char(ch)).filter_map(|ch| {
             SCRIPT_COUNTERS.par_iter().find_any(|&&(_, check_fn)| check_fn(ch)).map(|(script, _)| *script)
         })
-        .try_fold(|| FnvHashMap::default(), |mut counts, script| {
+        .try_fold(|| vec![0; SCRIPT_COUNTERS.len()], |mut counts, script| {
             // New scope needed until NLL lands
             {
-                let count = counts.entry(script).or_insert(0);
-                *count += 1;
-                if *count > half {
+                counts[script as usize] += 1;
+                if counts[script as usize] > half {
                     // use Err as an early return
                     return Err(script);
                 }
             }
             Ok(counts)
         })
-        .try_reduce(|| FnvHashMap::default(), |mut counts1, counts2| {
-            for (script, count) in counts2 {
-                let orig_count = counts1.entry(script).or_insert(0);
-                *orig_count += count;
+        .try_reduce(|| vec![0; SCRIPT_COUNTERS.len()], |mut counts1, counts2| {
+            for (i, (orig_count, &new_count)) in counts1.iter_mut().zip(counts2.iter()).enumerate() {
+                *orig_count += new_count;
                 if *orig_count > half {
-                    return Err(script);
+                    return Err(SCRIPT_COUNTERS[i].0)
                 }
             }
             Ok(counts1)
@@ -139,7 +137,7 @@ pub fn detect_script(text: &str) -> Option<Script> {
     match counts {
         // Early return: A count reached > half
         Err(script) => Some(script),
-        Ok(counts) => counts.into_iter().max_by_key(|&(_, count)| count).map(|(script, _)| script),
+        Ok(counts) => counts.into_iter().enumerate().max_by_key(|&(_, count)| count).map(|(i, _)| SCRIPT_COUNTERS[i].0),
     }
 }
 
